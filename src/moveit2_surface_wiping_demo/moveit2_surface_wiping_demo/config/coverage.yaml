@@ -1,0 +1,23 @@
+surface: countertop
+strategy: raster
+
+# Rectangular wiping pad footprint: 100 x 50 mm.
+pad_length: 0.10
+pad_width: 0.05
+
+# Keep the pad center away from edges/obstacles by 15 mm.
+keepout_margin: 0.015
+
+# Use a mid-range overlap from the requested 10-20%.
+overlap: 0.15
+
+# Reuse the working TCP convention discovered in Section 1.
+query_yaw: 0.0
+enforce_yaw: true
+
+# Raster direction and sampling resolution.
+sweep_axis: x
+waypoint_step: 0.02
+
+# Rough time parameterization assumption for joint-space output.
+joint_speed_rad_s: 0.5

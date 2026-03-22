@@ -1,0 +1,11 @@
+surface: countertop
+
+patch_center: [0.60, 0.00]  # Back to the previously better-performing sampling region
+patch_size : [0.60, 0.60]
+resolution: 0.02
+
+surface_z_offset: 0.02
+approach_offset: 0.05
+
+tool_normal_axis: y
+normal_tolerance_deg: 10.0

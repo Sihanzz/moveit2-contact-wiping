@@ -1,0 +1,19 @@
+world_frame: base_link
+
+countertop:
+  id: countertop
+  size: [1.20, 0.60, 0.04]
+  # Debug-friendly placement for UR5e. Top surface is at z = 0.60 m.
+  position: [0.80, 0.00, 0.58]
+
+faucet:
+  id: faucet
+  size: [0.12, 0.05, 0.30]
+  # Shifted toward the mirror side to resemble a sink corner and open the center area.
+  position: [1.15, -0.24, 0.75]
+
+mirror:
+  id: mirror
+  size: [0.90, 0.02, 0.60]
+  # Vertical obstacle behind the countertop along the rear edge.
+  position: [0.80, -0.31, 0.90]

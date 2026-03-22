@@ -1,0 +1,34 @@
+surface: countertop
+
+# Inputs
+coverage_waypoints_csv: ''
+
+# Controller loop
+dt: 0.05
+position_tolerance: 0.01
+lookahead_distance: 0.02
+approach_height: 0.05
+approach_speed: 0.03
+xy_kp: 2.0
+
+# Contact / force control
+contact_threshold_n: 2.0
+force_limit_n: 15.0
+contact_stiffness_n_per_m: 800.0
+force_kp_z: 0.0025
+vz_limit: 0.03
+backoff_distance: 0.03
+backoff_speed: 0.05
+
+# Surface-specific targets
+countertop_target_force_n: 10.0
+countertop_speed_mps: 0.20
+mirror_target_force_n: 6.0
+mirror_speed_mps: 0.15
+
+# Obstacle handling
+obstacle_margin: 0.03
+skip_replan_mode: skip
+
+# Plotting
+plot_title: Contact-Aware Wiping Control

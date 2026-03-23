@@ -184,7 +184,36 @@ class CoveragePlanner(Node):
             )
             self.fill_missing_solutions(x_coords, y_coords, reachability_grid, solution_lookup)
 
-        return x_coords, y_coords, reachability_grid, solution_lookup
+        return self.apply_keepout_margin(x_coords, y_coords, reachability_grid, solution_lookup)
+
+    def apply_keepout_margin(self, x_coords, y_coords, reachability_grid, solution_lookup):
+        patch_x_min = self.patch_center[0] - self.patch_size[0] / 2.0
+        patch_x_max = self.patch_center[0] + self.patch_size[0] / 2.0
+        patch_y_min = self.patch_center[1] - self.patch_size[1] / 2.0
+        patch_y_max = self.patch_center[1] + self.patch_size[1] / 2.0
+
+        x_min = patch_x_min + self.keepout_margin
+        x_max = patch_x_max - self.keepout_margin
+        y_min = patch_y_min + self.keepout_margin
+        y_max = patch_y_max - self.keepout_margin
+
+        x_mask = (x_coords >= x_min - 1e-9) & (x_coords <= x_max + 1e-9)
+        y_mask = (y_coords >= y_min - 1e-9) & (y_coords <= y_max + 1e-9)
+
+        trimmed_x = x_coords[x_mask]
+        trimmed_y = y_coords[y_mask]
+        trimmed_grid = reachability_grid[np.ix_(x_mask, y_mask)]
+        trimmed_lookup = {}
+
+        for x_idx, x in enumerate(trimmed_x):
+            for y_idx, y in enumerate(trimmed_y):
+                if not trimmed_grid[x_idx, y_idx]:
+                    continue
+                key = (round(float(x), 6), round(float(y), 6))
+                if key in solution_lookup:
+                    trimmed_lookup[key] = solution_lookup[key]
+
+        return trimmed_x, trimmed_y, trimmed_grid, trimmed_lookup
 
     def fill_missing_solutions(self, x_coords, y_coords, reachability_grid, solution_lookup):
         reachable_cells = int(np.sum(reachability_grid))

@@ -33,6 +33,7 @@ setup(
             'reachability_map = moveit2_surface_wiping_demo.reachability_map:main',
             'coverage_planner = moveit2_surface_wiping_demo.coverage_planner:main',
             'wiping_controller = moveit2_surface_wiping_demo.wiping_controller:main',
+            'wiping_visualization = moveit2_surface_wiping_demo.wiping_visualization:main',
             'plot_wiping_logs = moveit2_surface_wiping_demo.plot_wiping_logs:main',
         ],
     },

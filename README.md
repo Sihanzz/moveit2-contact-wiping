@@ -4,60 +4,36 @@ This repository implements a countertop wiping workflow for a 6-DOF arm in MoveI
 
 The robot used for validation is `ur5e` with the Universal Robots Jazzy stack.
 
-## Highlights
+## Simulation Environment
 
-- countertop reachability analysis over a `60 x 60 cm` patch at `2 cm` resolution
-- raster wiping plan with `100 x 50 mm` pad, `15 mm` keep-out margin, and `15%` overlap
-- contact-aware simulated wiping controller with force-threshold switching and safety backoff
-- RViz replay markers and a recorded demo video
-
-## Demo
-
-Video:
-
-![Section 3 Demo Video](docs/assets/demo.gif)
-
-Reachability heatmap:
-
-![Reachability Heatmap](docs/assets/reachability_heatmap.png)
-
-Coverage plan:
-
-![Coverage Plan](docs/assets/coverage_plan.png)
-
-Force and velocity tracking:
-
-![Force and Velocity Tracking](docs/assets/wiping_force_velocity.png)
+I use MoveIt 2 to visualize the robot arm and scene, which includes a `120 x 60 cm` countertop slab, a faucet obstacle, and a `90 x 60 cm` vertical mirror.
 
 ## Scope
 
 Implemented:
 
-- Section 1: countertop scene setup, IK service, 60 x 60 cm reachability map at 2 cm resolution
+- Section 1: environment setup, IK service, 60 x 60 cm reachability map at 2 cm resolution
 - Section 2: raster coverage planning for the countertop with keep-out margin and overlap
 - Section 3: simulated contact-aware wiping control, force/velocity logging, RViz replay markers
 
-Not part of the delivered minimum scope:
+Due to the time and ability limit, this repo does not finish:
 
 - mirror wiping strategy
 - spiral coverage strategy
 - real force sensor or hardware force control
 - full local replanning around the faucet
 
+## Demo
+
+![Section 3 Demo Video](docs/assets/demo.gif)
+
 ## Section 1: Kinematics and Reachability
 
-Implemented:
+In this section, the scene is built around a standard `ur5e` 6-DOF robot arm. A custom `ik_service` node wraps MoveIt 2 `/compute_ik` and exposes a simpler reachability query service for surface-aligned wiping poses. The reachability CSV is saved as `reachability_map_20260322_213355.csv` in `outputs/`, and the heatmap is shown below:
 
-- countertop, faucet, and mirror collision objects in the planning scene
-- a custom `reachability_query` service backed by MoveIt `/compute_ik`
-- collision-aware IK checks for surface-aligned countertop targets
-- reachability sampling over a `60 x 60 cm` patch at `2 cm` resolution
-- CSV export and heatmap generation
+![Reachability Heatmap](docs/assets/reachability_heatmap.png)
 
-Latest artifacts:
-
-- `outputs/reachability_map_20260322_213355.csv`
-- `outputs/reachability_heatmap_20260322_213355.png`
+In this project, a point is treated as reachable only if MoveIt 2 can return a collision-aware IK solution for the requested surface pose. The service rejects points outside the configured `60 x 60 cm` patch, points at the wrong surface height, and points for which no valid collision-free IK solution exists under the chosen wiping orientation.
 
 Current result summary:
 
@@ -72,24 +48,15 @@ Interpretation:
 - the central countertop region is reachable more often than the boundary
 - the fixed wiping orientation reduces valid IK solutions
 - collision-aware IK rejects solutions that would intersect the planning scene
+- the chosen TCP orientation convention matters, because a wrong tool-to-surface alignment changes both reachability and wiping direction
 
 ## Section 2: Surface Coverage Path Planning
 
-Implemented:
+In this section, I build on the reachability result from Section 1 to generate a wiping path over the countertop. The implemented strategy is a simple raster sweep over the reachable subset of the patch. The planner first loads or recomputes a reachability mask, applies the `15 mm` keep-out margin, and then samples raster waypoints using the configured pad size, overlap, and waypoint step.
 
-- raster coverage strategy for the countertop
-- tool footprint parameterization: `100 x 50 mm`
-- keep-out margin: `15 mm`
-- overlap: `15%`
-- reachable-cell filtering using Section 1 outputs
-- waypoint CSV, joint-state sequence CSV, metrics CSV, and planner plot
+The result is shown below: 
 
-Latest artifacts:
-
-- `outputs/coverage_waypoints_20260323_204840.csv`
-- `outputs/joint_trajectory_20260323_204840.csv`
-- `outputs/coverage_metrics_20260323_204840.csv`
-- `outputs/coverage_plan_20260323_204840.png`
+![Coverage Plan](docs/assets/coverage_plan.png)
 
 Current result summary:
 
@@ -104,6 +71,10 @@ Design note:
 
 The joint trajectory output is a joint-state sequence with simple timing estimation from inter-waypoint joint deltas. It is suitable for evaluation and reporting, but it is not a full MoveIt time-parameterized execution trajectory.
 
+Besides, due to the time limit, the spiral coverage plan is not implemented. My current understanding is that raster is the more reasonable baseline for this project because the reachable region is not continuous everywhere and the current planner only samples discrete reachable cells. A spiral strategy would be more natural on a smoother and more uniformly reachable surface, but it would need additional logic to handle discontinuities, orientation changes for the mirror, and path continuity between cells.
+
+Another limitation of the current raster implementation is that waypoint reachability is checked point-by-point; it does not prove that every motion segment between adjacent waypoints is itself collision-free or dynamically executable. So the generated joint trajectory should be read as an evaluation artifact rather than a strict execution-ready motion plan.
+
 ## Section 3: Contact-Aware Wiping Control
 
 Implemented:
@@ -117,12 +88,9 @@ Implemented:
 - force and velocity logging
 - RViz replay markers for demo recording
 
-Latest artifacts:
+The results are shown below, the plot shows force regulation and tangential speed over time:
 
-- `outputs/wiping_log_20260323_204959.csv`
-- `outputs/wiping_metrics_20260323_204959.csv`
-- `outputs/wiping_force_velocity_20260323_204959.png`
-- `outputs/Screencast from 2026-03-23 20-55-55.webm`
+![Force and Velocity Tracking](docs/assets/wiping_force_velocity.png)
 
 Current result summary:
 
@@ -135,11 +103,8 @@ Current result summary:
 - contact switches: `1`
 - backoff events: `0`
 
-Interpretation:
+This section is implemented as a simulated controller over the planned Cartesian waypoints. It uses a simple state machine with `APPROACH`, `CONTACT`, and `BACKOFF` states, plus a spring-like contact-force model from penetration depth. This is enough to demonstrate the intended control logic and produce force/velocity logs, but it is not a hardware-grade impedance controller.
 
-- the RViz replay shows the wiping path, controller state text, and current TCP replay marker
-- the plot shows force regulation and tangential speed over time
-- together, the replay and plots satisfy the requested "video/gif or sim run" deliverable
 
 ## Build
 
@@ -179,6 +144,12 @@ ros2 launch moveit2_surface_wiping_demo demo.launch.py \
     end_effector_link:=tool0
 ```
 
+This launches:
+
+- `scene_setup`: publishes the countertop, faucet, and mirror collision objects
+- `ik_service`: wraps `/compute_ik` into the custom `reachability_query` service
+- `reachability_map`: samples the `60 x 60 cm` patch and exports CSV + heatmap
+
 Section 2:
 
 ```bash
@@ -188,12 +159,16 @@ ros2 launch moveit2_surface_wiping_demo coverage.launch.py \
     end_effector_link:=tool0
 ```
 
+This launches the scene, the same IK service, and the `coverage_planner`, which consumes the reachability result and exports coverage metrics, waypoints, a joint-state trajectory CSV, and a plot.
+
 Section 3:
 
 ```bash
 source /home/sihan/ws_wiping/install/setup.bash
 ros2 launch moveit2_surface_wiping_demo control.launch.py
 ```
+
+This loads the latest coverage waypoint CSV and runs the simulated wiping controller, exporting log CSVs, summary metrics, and the force/velocity plot.
 
 Section 3 RViz replay:
 
@@ -209,35 +184,16 @@ source /home/sihan/ws_wiping/install/setup.bash
 ros2 launch moveit2_surface_wiping_demo control_viz.launch.py playback_rate:=1.0
 ```
 
-## Parameters
-
-Key parameters are defined in:
-
-- `src/moveit2_surface_wiping_demo/moveit2_surface_wiping_demo/config/scene.yaml`
-- `src/moveit2_surface_wiping_demo/moveit2_surface_wiping_demo/config/reachability.yaml`
-- `src/moveit2_surface_wiping_demo/moveit2_surface_wiping_demo/config/coverage.yaml`
-- `src/moveit2_surface_wiping_demo/moveit2_surface_wiping_demo/config/control.yaml`
-
-Important values:
-
-- patch size: `0.60 x 0.60 m`
-- reachability resolution: `0.02 m`
-- pad size: `0.10 x 0.05 m`
-- keep-out margin: `0.015 m`
-- overlap: `0.15`
-- countertop target force: `10 N`
-- countertop target speed: `0.20 m/s`
 
 ## Limitations and Trade-Offs
 
 - The delivered task scope is countertop wiping only. The mirror is modeled in the scene but is not implemented as a full wiping target.
+
 - Faucet and mirror are included in the MoveIt planning scene, so they affect collision-aware IK reachability queries. The coverage planner itself does not perform explicit 2D obstacle-footprint carving on the wiping surface.
-- Obstacle handling in Section 3 is waypoint skipping around the faucet keep-out region, not local replanning.
+
+- Obstacle handling in Section 3 is waypoint skipping logic around the faucet keep-out region, not local replanning. In the current scene configuration and current reachability patch, the generated countertop path does not enter the faucet keep-out region, so the latest output shows `0` skipped waypoints.
+
 - The RViz replay shows the simulated controller state using markers; it does not drive the UR5e joints through the wiping log.
+
 - The joint trajectory output is an evaluation artifact derived from IK samples, not a full execution-ready trajectory from a motion planner.
 
-## Files
-
-The package source and package-level documentation remain under:
-
-- `src/moveit2_surface_wiping_demo/moveit2_surface_wiping_demo/`

@@ -1,0 +1,3 @@
+surface,samples,target_force_n,force_tolerance_n,target_speed_m_s,force_within_tolerance_percent,avg_force_n,peak_force_n,avg_speed_m_s,peak_speed_m_s,skipped_waypoints,backoff_events
+countertop,713,10.0,2.0,0.2,99.15611814345992,9.950773558368494,9.999999999999996,0.19191780168239927,0.19999997192276486,23,0
+mirror,1084,6.0,1.5,0.15,99.62894248608535,5.981323438466295,5.999999999999998,0.14407131895073855,0.14999997894207362,0,1

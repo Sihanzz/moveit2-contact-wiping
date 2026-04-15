@@ -1,0 +1,13 @@
+metric,value
+surface,countertop
+samples,713
+target_force_n,10.0
+force_tolerance_n,2.0
+target_speed_m_s,0.2
+force_within_tolerance_percent,99.15611814345992
+avg_force_n,9.950773558368494
+peak_force_n,9.999999999999996
+avg_speed_m_s,0.19191780168239927
+peak_speed_m_s,0.19999997192276486
+skipped_waypoints,23
+backoff_events,0

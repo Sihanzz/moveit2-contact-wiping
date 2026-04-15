@@ -1,0 +1,13 @@
+metric,value
+surface,mirror
+samples,1084
+target_force_n,6.0
+force_tolerance_n,1.5
+target_speed_m_s,0.15
+force_within_tolerance_percent,99.62894248608535
+avg_force_n,5.981323438466295
+peak_force_n,5.999999999999998
+avg_speed_m_s,0.14407131895073855
+peak_speed_m_s,0.14999997894207362
+skipped_waypoints,0
+backoff_events,1

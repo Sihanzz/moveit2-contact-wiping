@@ -1,0 +1,72 @@
+# world_frame: base_link
+
+# countertop:
+#   id: countertop
+#   size: [1.20, 0.60, 0.04]
+#   # Main wiping target in front of the UR5e. Top surface is at z = 0.60 m.
+#   position: [0.78, 0.00, 0.58]
+#   orientation: [0.0, 0.0, 0.0, 1.0]
+
+# faucet:
+#   id: faucet
+#   size: [0.10, 0.08, 0.30]
+#   # Kept in the far rear-right corner so the center patch stays usable.
+#   position: [1.05, -0.22, 0.75]
+#   orientation: [0.0, 0.0, 0.0, 1.0]
+
+# mirror:
+#   id: mirror
+#   size: [0.90, 0.02, 0.60]
+#   # Vertical wiping surface behind the countertop, facing the robot.
+#   position: [0.78, -0.31, 0.90]
+#   orientation: [0.0, 0.0, 0.0, 1.0]
+
+# world_frame: base_link
+
+# countertop:
+#   id: countertop
+#   size: [1.20, 0.60, 0.04]
+#   # top surface = 0.60 m
+#   position: [0.75, 0.00, 0.58]
+#   orientation: [0.0, 0.0, 0.0, 1.0]
+
+# faucet:
+#   id: faucet
+#   size: [0.10, 0.08, 0.30]
+#   # put it near the back-left corner of the countertop
+#   position: [1.05, 0.18, 0.75]
+#   orientation: [0.0, 0.0, 0.0, 1.0]
+
+# mirror:
+#   id: mirror
+#   # thin in x, wide in y, tall in z
+#   size: [0.02, 0.90, 0.60]
+#   # stand behind the countertop, facing the robot
+#   position: [1.18, 0.00, 0.90]
+#   orientation: [0.0, 0.0, 0.0, 1.0]
+
+world_frame: base_link
+
+countertop:
+  id: countertop
+  # x: depth, y: width, z: thickness
+  size: [0.60, 1.20, 0.04]
+  # put the table in front of the robot
+  # top surface = 0.60 m
+  position: [0.50, 0.00, 0.38]
+  orientation: [0.0, 0.0, 0.0, 1.0]
+
+faucet:
+  id: faucet
+  size: [0.10, 0.08, 0.30]
+  # near the back-left corner of the countertop
+  position: [0.58, 0.28, 0.55]
+  orientation: [0.0, 0.0, 0.0, 1.0]
+
+mirror:
+  id: mirror
+  # thin in x, wide in y, tall in z
+  size: [0.02, 0.90, 0.60]
+  # place it behind the countertop, facing the robot
+  position: [0.66, 0.00, 0.70]
+  orientation: [0.0, 0.0, 0.0, 1.0]

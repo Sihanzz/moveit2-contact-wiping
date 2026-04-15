@@ -1,0 +1,28 @@
+surface: countertop
+
+# 60 x 60 cm patch centered on the current countertop geometry.
+patch_center: [0.50, 0.00]
+patch_size : [0.60, 0.60]
+resolution: 0.02
+
+surface_z_offset: 0.10
+approach_offset: 0.05
+
+# Pose construction is defined by axis alignment instead of hard-coded Euler angles.
+# Based on tf:
+# - tool0.x -> +base x
+# - tool0.y -> -base z
+# - tool0.z -> +base y
+# We treat tool0.z as the wiping-face normal and align it with the surface normal.
+# For the countertop:
+# - tool z-axis should point toward the surface, i.e. along -base z
+# - tool x-axis should align with +base x
+tool_normal_axis: z
+tool_tangent_axis: x
+surface_normal_axis_world: z
+surface_normal_sign: -1.0
+reference_axis_world: x
+reference_axis_sign: 1.0
+query_yaw: 0.0
+search_yaw: true
+normal_tolerance_deg: 10.0

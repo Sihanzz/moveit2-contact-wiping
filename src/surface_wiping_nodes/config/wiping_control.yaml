@@ -1,0 +1,32 @@
+sample_period_s: 0.05
+
+surfaces:
+  countertop:
+    waypoint_pattern: coverage_waypoints_countertop_raster_*.csv
+    target_force_n: 10.0
+    force_tolerance_n: 2.0
+    target_speed_m_s: 0.20
+    switch_force_n: 2.0
+    backoff_force_n: 15.0
+    approach_force_rate_n_s: 30.0
+    force_response_gain: 4.0
+    backoff_force_drop_n_s: 70.0
+    obstacle:
+      object_name: faucet
+      mode: skip
+      margin_m: 0.10
+
+  mirror:
+    waypoint_pattern: coverage_waypoints_mirror_spiral_*.csv
+    target_force_n: 6.0
+    force_tolerance_n: 1.5
+    target_speed_m_s: 0.15
+    switch_force_n: 2.0
+    backoff_force_n: 15.0
+    approach_force_rate_n_s: 24.0
+    force_response_gain: 4.5
+    backoff_force_drop_n_s: 80.0
+    disturbance:
+      enabled: true
+      waypoint_ratio: 0.35
+      overload_force_n: 10.5

@@ -1,0 +1,43 @@
+pad_length: 0.10
+pad_width: 0.05
+keepout_margin: 0.015
+overlap: 0.15
+waypoint_step: 0.02
+joint_speed_rad_s: 0.50
+
+surfaces:
+  countertop:
+    strategy: raster
+    patch_center: [0.50, 0.00]
+    patch_size: [0.60, 0.60]
+    contact_offset: 0.10
+    tool_normal_axis: z
+    tool_tangent_axis: x
+    surface_normal_axis_world: z
+    surface_normal_sign: -1.0
+    reference_axis_world: x
+    reference_axis_sign: 1.0
+    search_yaw: true
+    yaw_candidates_deg: [0.0, 90.0, -90.0, 180.0]
+
+  mirror:
+    strategy: spiral
+    patch_center: [0.66, 0.00, 0.70]
+    patch_size: [0.60, 0.60]
+    # Use the same first-order TCP compensation as the countertop, then tune if needed.
+    contact_offset: 0.10
+    plane_axes: [y, z]
+    # Keep the same wiping-face convention as the countertop:
+    # - tool0.z is the contact normal
+    # - tool0.x is the in-plane wiping direction
+    tool_normal_axis: z
+    tool_tangent_axis: x
+    # Mirror stands in front of the robot, so align the tool normal with +base x.
+    surface_normal_axis_world: x
+    surface_normal_sign: 1.0
+    # Prefer vertical wiping direction on the mirror.
+    reference_axis_world: z
+    reference_axis_sign: 1.0
+    query_yaw: 0.0
+    search_yaw: true
+    yaw_candidates_deg: [-10.0, -5.0, 0.0, 5.0, 10.0]

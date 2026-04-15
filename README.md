@@ -89,7 +89,7 @@ Artifacts:
 - CSV: [reachability_map_20260415_170134.csv](/home/sihan/ws_surface_wiping_clean/outputs/reachability_map_20260415_170134.csv)
 - Heatmap: [reachability_heatmap_20260415_170135.png](/home/sihan/ws_surface_wiping_clean/outputs/reachability_heatmap_20260415_170135.png)
 
-![Countertop Reachability Heatmap](../outputs/reachability_heatmap_20260415_170135.png)
+![Countertop Reachability Heatmap](/outputs/reachability_heatmap_20260415_170135.png)
 
 Sampling setup:
 - patch size: `60 x 60 cm`
@@ -136,7 +136,7 @@ Artifacts:
 - Metrics: [coverage_metrics_countertop_raster_20260415_183716.csv](/home/sihan/ws_surface_wiping_clean/outputs/coverage_metrics_countertop_raster_20260415_183716.csv)
 - Plot: [coverage_plan_countertop_raster_20260415_183716.png](/home/sihan/ws_surface_wiping_clean/outputs/coverage_plan_countertop_raster_20260415_183716.png)
 
-![Countertop Raster Plan](../outputs/coverage_plan_countertop_raster_20260415_183716.png)
+![Countertop Raster Plan](/outputs/coverage_plan_countertop_raster_20260415_183716.png)
 
 Metrics:
 - waypoints: `283`
@@ -152,7 +152,7 @@ Artifacts:
 - Metrics: [coverage_metrics_mirror_spiral_20260415_183716.csv](/home/sihan/ws_surface_wiping_clean/outputs/coverage_metrics_mirror_spiral_20260415_183716.csv)
 - Plot: [coverage_plan_mirror_spiral_20260415_183716.png](/home/sihan/ws_surface_wiping_clean/outputs/coverage_plan_mirror_spiral_20260415_183716.png)
 
-![Mirror Spiral Plan](../outputs/coverage_plan_mirror_spiral_20260415_183716.png)
+![Mirror Spiral Plan](/outputs/coverage_plan_mirror_spiral_20260415_183716.png)
 
 Metrics:
 - waypoints: `241`
@@ -193,7 +193,7 @@ Demo video: ![countertop.webm](/outputs/countertop.gif)
 - Log: [contact_wiping_log_countertop_20260415_224146.csv](/home/sihan/ws_surface_wiping_clean/outputs/contact_wiping_log_countertop_20260415_224146.csv)
 - Tracking plot: [contact_wiping_tracking_countertop_20260415_224146.png](/home/sihan/ws_surface_wiping_clean/outputs/contact_wiping_tracking_countertop_20260415_224146.png)
 
-![Countertop Force and Velocity Tracking](../outputs/contact_wiping_tracking_countertop_20260415_224146.png)
+![Countertop Force and Velocity Tracking](/outputs/contact_wiping_tracking_countertop_20260415_224146.png)
 
 Metrics:
 - target force: `10 N ± 2 N`
@@ -212,7 +212,7 @@ Demo video: ![mirror.webm](/outputs/mirror.gif)
 - Log: [contact_wiping_log_mirror_20260415_224146.csv](/home/sihan/ws_surface_wiping_clean/outputs/contact_wiping_log_mirror_20260415_224146.csv)
 - Tracking plot: [contact_wiping_tracking_mirror_20260415_224146.png](/home/sihan/ws_surface_wiping_clean/outputs/contact_wiping_tracking_mirror_20260415_224146.png)
 
-![Mirror Force and Velocity Tracking](../outputs/contact_wiping_tracking_mirror_20260415_224146.png)
+![Mirror Force and Velocity Tracking](/outputs/contact_wiping_tracking_mirror_20260415_224146.png)
 
 Metrics:
 - target force: `6 N ± 1.5 N`

@@ -18,7 +18,13 @@ surfaces:
     reference_axis_world: x
     reference_axis_sign: 1.0
     search_yaw: true
-    yaw_candidates_deg: [0.0, 90.0, -90.0, 180.0]
+    query_yaw: 0.0
+    yaw_min_deg: -180.0
+    yaw_max_deg: 180.0
+    yaw_step_deg: 15.0
+    yaw_refinement_deg: 5.0
+    continuation_window_deg: 20.0
+    continuation_step_deg: 5.0
 
   mirror:
     strategy: spiral
@@ -40,4 +46,9 @@ surfaces:
     reference_axis_sign: 1.0
     query_yaw: 0.0
     search_yaw: true
-    yaw_candidates_deg: [-10.0, -5.0, 0.0, 5.0, 10.0]
+    yaw_min_deg: -45.0
+    yaw_max_deg: 45.0
+    yaw_step_deg: 10.0
+    yaw_refinement_deg: 2.5
+    continuation_window_deg: 12.0
+    continuation_step_deg: 3.0

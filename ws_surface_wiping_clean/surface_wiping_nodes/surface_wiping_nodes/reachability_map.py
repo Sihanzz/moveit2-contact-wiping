@@ -69,6 +69,14 @@ def quaternion_from_rotation_matrix(rotation):
     return qx, qy, qz, qw
 
 
+def wrap_to_pi(angle):
+    return math.atan2(math.sin(angle), math.cos(angle))
+
+
+def angular_distance(a, b):
+    return abs(wrap_to_pi(a - b))
+
+
 class ReachabilityMapNode(Node):
     """Samples a surface patch and exports a collision-aware IK reachability map."""
 
@@ -116,6 +124,12 @@ class ReachabilityMapNode(Node):
             self.reachability_config['reference_axis_world'],
             float(self.reachability_config['reference_axis_sign']),
         )
+        self.yaw_min_deg = float(self.reachability_config.get('yaw_min_deg', -180.0))
+        self.yaw_max_deg = float(self.reachability_config.get('yaw_max_deg', 180.0))
+        self.yaw_step_deg = float(self.reachability_config.get('yaw_step_deg', 15.0))
+        self.yaw_refinement_deg = float(self.reachability_config.get('yaw_refinement_deg', 5.0))
+        self.detect_artifact_holes = bool(self.reachability_config.get('detect_artifact_holes', True))
+        self.repair_artifact_holes = bool(self.reachability_config.get('repair_artifact_holes', False))
 
         surface_config = self.scene_config[self.surface_name]
         top_surface = surface_config['position'][2] + surface_config['size'][2] / 2.0
@@ -137,7 +151,9 @@ class ReachabilityMapNode(Node):
             f'patch_center={self.patch_center.tolist()} patch_size={self.patch_size.tolist()} '
             f'resolution={self.resolution:.3f} surface_z={self.surface_z:.3f} '
             f'tool_normal_axis={self.tool_normal_axis} '
-            f'tool_tangent_axis={self.tool_tangent_axis}'
+            f'tool_tangent_axis={self.tool_tangent_axis} '
+            f'yaw_range=[{self.yaw_min_deg:.1f}, {self.yaw_max_deg:.1f}) '
+            f'yaw_step={self.yaw_step_deg:.1f}'
         )
 
         if not self.client.wait_for_service(timeout_sec=10.0):
@@ -173,6 +189,16 @@ class ReachabilityMapNode(Node):
                     f'reachable={reachable_count} failures={dict(failure_counts)}'
                 )
 
+        artifact_holes = self.detect_artifact_holes_in_results(results, grid_shape)
+        if artifact_holes:
+            for idx in artifact_holes:
+                results[idx]['message'] = 'artifact_hole'
+                results[idx]['artifact_hole'] = True
+                if self.repair_artifact_holes:
+                    results[idx]['reachable'] = True
+                    reachable_count += 1
+                    failure_counts['artifact_hole'] = max(0, failure_counts['artifact_hole'] - 1)
+
         reachability_grid = np.array(
             [1 if item['reachable'] else 0 for item in results],
             dtype=int,
@@ -184,6 +210,7 @@ class ReachabilityMapNode(Node):
         self.get_logger().info(
             f'Reachability complete: reachable={reachable_count}/{len(results)} '
             f'ratio={100.0 * reachable_count / len(results):.1f}% '
+            f'artifact_holes={len(artifact_holes)} '
             f'csv={csv_path} heatmap={png_path}'
         )
 
@@ -211,14 +238,7 @@ class ReachabilityMapNode(Node):
         return points, x_coords, y_coords, (len(x_coords), len(y_coords))
 
     def evaluate_point(self, point):
-        yaw_candidates = [self.query_yaw]
-        if self.search_yaw:
-            yaw_candidates = [
-                self.query_yaw,
-                self.query_yaw + math.pi / 2.0,
-                self.query_yaw - math.pi / 2.0,
-                self.query_yaw + math.pi,
-            ]
+        yaw_candidates = self.build_yaw_candidates()
 
         messages = []
         for yaw in yaw_candidates:
@@ -237,6 +257,7 @@ class ReachabilityMapNode(Node):
                     'yaw': yaw,
                     'pose': pose,
                     'joint_state': response.joint_state,
+                    'artifact_hole': False,
                 }
             messages.append(response.message or 'ik_failed')
 
@@ -249,7 +270,70 @@ class ReachabilityMapNode(Node):
             'yaw': float('nan'),
             'pose': None,
             'joint_state': None,
+            'artifact_hole': False,
         }
+
+    def build_yaw_candidates(self):
+        if not self.search_yaw:
+            return [self.query_yaw]
+
+        coarse = self._sweep_angles(
+            math.radians(self.yaw_min_deg),
+            math.radians(self.yaw_max_deg),
+            math.radians(self.yaw_step_deg),
+            self.query_yaw,
+            base=self.query_yaw,
+        )
+        if self.yaw_refinement_deg <= 0.0:
+            return coarse
+
+        refined = self._sweep_angles(
+            -math.radians(self.yaw_step_deg),
+            math.radians(self.yaw_step_deg) + math.radians(self.yaw_refinement_deg) / 2.0,
+            math.radians(self.yaw_refinement_deg),
+            self.query_yaw,
+            base=self.query_yaw,
+        )
+        return self._deduplicate_angles(coarse + refined)
+
+    def _sweep_angles(self, angle_min, angle_max, angle_step, center, base=0.0):
+        if angle_step <= 0.0:
+            return [wrap_to_pi(center)]
+
+        samples = []
+        angle = angle_min
+        while angle < angle_max - 1e-9:
+            samples.append(wrap_to_pi(base + angle))
+            angle += angle_step
+        samples.sort(key=lambda yaw: (angular_distance(yaw, center), yaw))
+        return self._deduplicate_angles(samples)
+
+    def _deduplicate_angles(self, angles):
+        unique = []
+        for yaw in angles:
+            if all(angular_distance(yaw, existing) > 1e-6 for existing in unique):
+                unique.append(wrap_to_pi(yaw))
+        return unique
+
+    def detect_artifact_holes_in_results(self, results, grid_shape):
+        if not self.detect_artifact_holes:
+            return []
+        grid = np.array([1 if item['reachable'] else 0 for item in results], dtype=int).reshape(grid_shape)
+        artifact_indices = []
+        rows, cols = grid_shape
+        for row in range(1, rows - 1):
+            for col in range(1, cols - 1):
+                if grid[row, col] != 0:
+                    continue
+                neighborhood = [
+                    grid[row - 1, col],
+                    grid[row + 1, col],
+                    grid[row, col - 1],
+                    grid[row, col + 1],
+                ]
+                if all(value == 1 for value in neighborhood):
+                    artifact_indices.append(row * cols + col)
+        return artifact_indices
 
     def make_surface_pose(self, point, yaw):
         pose = PoseStamped()
@@ -331,6 +415,7 @@ class ReachabilityMapNode(Node):
                 'x', 'y', 'z', 'reachable', 'message',
                 'yaw',
                 'qx', 'qy', 'qz', 'qw',
+                'artifact_hole',
                 'joint_names', 'joint_positions',
             ])
 
@@ -365,6 +450,7 @@ class ReachabilityMapNode(Node):
                     qy,
                     qz,
                     qw,
+                    int(result.get('artifact_hole', False)),
                     joint_names,
                     joint_positions,
                 ])

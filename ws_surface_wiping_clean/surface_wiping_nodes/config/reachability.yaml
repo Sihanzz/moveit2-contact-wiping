@@ -25,4 +25,10 @@ reference_axis_world: x
 reference_axis_sign: 1.0
 query_yaw: 0.0
 search_yaw: true
+yaw_min_deg: -180.0
+yaw_max_deg: 180.0
+yaw_step_deg: 15.0
+yaw_refinement_deg: 5.0
+detect_artifact_holes: true
+repair_artifact_holes: false
 normal_tolerance_deg: 10.0

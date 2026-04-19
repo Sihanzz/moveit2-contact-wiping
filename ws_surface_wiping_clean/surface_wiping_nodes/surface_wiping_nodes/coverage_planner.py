@@ -74,6 +74,14 @@ def quaternion_from_rotation_matrix(rotation):
     return qx, qy, qz, qw
 
 
+def wrap_to_pi(angle):
+    return math.atan2(math.sin(angle), math.cos(angle))
+
+
+def angular_distance(a, b):
+    return abs(wrap_to_pi(a - b))
+
+
 class CoveragePlanner(Node):
     """Generates countertop raster and mirror spiral wiping plans."""
 
@@ -176,7 +184,16 @@ class CoveragePlanner(Node):
                 joint_state = JointState()
                 joint_state.name = row['joint_names'].split(';')
                 joint_state.position = [float(v) for v in row['joint_positions'].split(';') if v]
-                solution_lookup[(round(x, 6), round(y, 6))] = joint_state
+                solution_lookup[(round(x, 6), round(y, 6))] = {
+                    'joint_state': joint_state,
+                    'yaw': float(row['yaw']) if row.get('yaw') not in ('', None) else 0.0,
+                    'orientation': {
+                        'qx': float(row['qx']) if row.get('qx') not in ('', None) else 0.0,
+                        'qy': float(row['qy']) if row.get('qy') not in ('', None) else 0.0,
+                        'qz': float(row['qz']) if row.get('qz') not in ('', None) else 0.0,
+                        'qw': float(row['qw']) if row.get('qw') not in ('', None) else 1.0,
+                    },
+                }
 
         return {
             'csv_path': csv_path,
@@ -237,7 +254,6 @@ class CoveragePlanner(Node):
         }
 
     def plan_surface_online(self, surface_name, surface_cfg, strategy):
-        patch_center = np.array(surface_cfg['patch_center'], dtype=float)
         patch_size = np.array(surface_cfg['patch_size'], dtype=float)
         if strategy == 'spiral':
             waypoints = self.generate_spiral_waypoints(surface_name, surface_cfg)
@@ -250,8 +266,10 @@ class CoveragePlanner(Node):
         joint_trajectory = []
         failure_counts = Counter()
         total = len(waypoints)
+        previous_solution = None
         for index, waypoint in enumerate(waypoints, start=1):
-            pose, response = self.solve_waypoint(surface_cfg, waypoint)
+            solution = self.solve_waypoint(surface_cfg, waypoint, previous_solution)
+            response = solution['response']
             if response is None or not response.success:
                 failure_counts[(response.message if response else 'service_call_timeout')] += 1
                 if index % 25 == 0 or index == total:
@@ -262,11 +280,17 @@ class CoveragePlanner(Node):
                         f'failures={dict(failure_counts)}'
                     )
                 continue
-            feasible_waypoints.append(waypoint)
+            enriched_waypoint = dict(waypoint)
+            enriched_waypoint['yaw'] = solution['yaw']
+            enriched_waypoint['orientation'] = solution['orientation']
+            feasible_waypoints.append(enriched_waypoint)
             joint_trajectory.append({
-                'point': waypoint,
+                'point': enriched_waypoint,
                 'joint_state': response.joint_state,
+                'yaw': solution['yaw'],
+                'orientation': solution['orientation'],
             })
+            previous_solution = solution
             if index % 25 == 0 or index == total:
                 self.get_logger().info(
                     f'{surface_name} progress {index}/{total} '
@@ -308,6 +332,7 @@ class CoveragePlanner(Node):
         waypoints = []
         joint_trajectory = []
         direction = 1
+        previous_solution = None
         for y_idx in selected_y_indices:
             reachable_x = [x_idx for x_idx in range(len(x_coords)) if grid[x_idx, y_idx]]
             if not reachable_x:
@@ -317,16 +342,50 @@ class CoveragePlanner(Node):
                 x = float(x_coords[x_idx])
                 y = float(y_coords[y_idx])
                 key = (round(x, 6), round(y, 6))
-                joint_state = solution_lookup.get(key)
-                if joint_state is None:
+                cached = solution_lookup.get(key)
+                if cached is None:
                     point = {'x': x, 'y': y, 'z': self.surface_height(surface_name, surface_cfg)}
-                    _, response = self.solve_waypoint(surface_cfg, point)
+                    solution = self.solve_waypoint(surface_cfg, point, previous_solution)
+                    response = solution['response']
                     if response is None or not response.success:
                         continue
                     joint_state = response.joint_state
-                point = {'x': x, 'y': y, 'z': self.surface_height(surface_name, surface_cfg)}
+                    orientation = solution['orientation']
+                    yaw = solution['yaw']
+                    previous_solution = solution
+                else:
+                    point = {'x': x, 'y': y, 'z': self.surface_height(surface_name, surface_cfg)}
+                    solution = self.solve_waypoint(
+                        surface_cfg,
+                        point,
+                        previous_solution,
+                        query_yaw_override=cached['yaw'],
+                    )
+                    response = solution['response']
+                    if response is not None and response.success:
+                        joint_state = response.joint_state
+                        orientation = solution['orientation']
+                        yaw = solution['yaw']
+                        previous_solution = solution
+                    else:
+                        joint_state = cached['joint_state']
+                        yaw = cached['yaw']
+                        orientation = cached['orientation']
+                        previous_solution = {'yaw': yaw, 'orientation': orientation}
+                point = {
+                    'x': x,
+                    'y': y,
+                    'z': self.surface_height(surface_name, surface_cfg),
+                    'yaw': yaw,
+                    'orientation': orientation,
+                }
                 waypoints.append(point)
-                joint_trajectory.append({'point': point, 'joint_state': joint_state})
+                joint_trajectory.append({
+                    'point': point,
+                    'joint_state': joint_state,
+                    'yaw': yaw,
+                    'orientation': orientation,
+                })
             direction *= -1
         return waypoints, joint_trajectory
 
@@ -410,9 +469,6 @@ class CoveragePlanner(Node):
     def normal_axis_name(self, surface_cfg):
         return surface_cfg['surface_normal_axis_world']
 
-    def make_surface_pose(self, surface_cfg, point):
-        return self.make_surface_pose_with_yaw(surface_cfg, point, 0.0)
-
     def make_surface_pose_with_yaw(self, surface_cfg, point, yaw):
         pose = PoseStamped()
         pose.header.frame_id = self.scene_config['world_frame']
@@ -426,35 +482,101 @@ class CoveragePlanner(Node):
         pose.pose.orientation.w = qw
         return pose
 
-    def solve_waypoint(self, surface_cfg, point):
-        query_yaw = float(surface_cfg.get('query_yaw', 0.0))
-        search_yaw = bool(surface_cfg.get('search_yaw', False))
-        configured_candidates_deg = surface_cfg.get('yaw_candidates_deg', [])
-        if configured_candidates_deg:
-            yaw_candidates = [
-                query_yaw + math.radians(float(delta_deg))
-                for delta_deg in configured_candidates_deg
-            ]
-        elif search_yaw:
-            yaw_candidates = [
-                query_yaw,
-                query_yaw + math.pi / 2.0,
-                query_yaw - math.pi / 2.0,
-                query_yaw + math.pi,
-            ]
-        else:
-            yaw_candidates = [query_yaw]
+    def solve_waypoint(self, surface_cfg, point, previous_solution=None, query_yaw_override=None):
+        query_yaw = float(
+            surface_cfg.get('query_yaw', 0.0)
+            if query_yaw_override is None else query_yaw_override
+        )
+        yaw_candidates = self.build_yaw_candidates(surface_cfg, previous_solution, query_yaw)
 
         last_response = None
         last_pose = None
+        last_yaw = None
         for yaw in yaw_candidates:
             pose = self.make_surface_pose_with_yaw(surface_cfg, point, yaw)
             response = self.call_ik(pose)
             last_pose = pose
             last_response = response
+            last_yaw = yaw
             if response is not None and response.success:
-                return pose, response
-        return last_pose, last_response
+                orientation = {
+                    'qx': pose.pose.orientation.x,
+                    'qy': pose.pose.orientation.y,
+                    'qz': pose.pose.orientation.z,
+                    'qw': pose.pose.orientation.w,
+                }
+                return {
+                    'pose': pose,
+                    'response': response,
+                    'yaw': wrap_to_pi(yaw),
+                    'orientation': orientation,
+                }
+        orientation = None
+        if last_pose is not None:
+            orientation = {
+                'qx': last_pose.pose.orientation.x,
+                'qy': last_pose.pose.orientation.y,
+                'qz': last_pose.pose.orientation.z,
+                'qw': last_pose.pose.orientation.w,
+            }
+        return {
+            'pose': last_pose,
+            'response': last_response,
+            'yaw': last_yaw,
+            'orientation': orientation,
+        }
+
+    def build_yaw_candidates(self, surface_cfg, previous_solution, query_yaw):
+        if not bool(surface_cfg.get('search_yaw', False)):
+            return [wrap_to_pi(query_yaw)]
+
+        local_candidates = []
+        if previous_solution is not None and previous_solution.get('yaw') is not None:
+            previous_yaw = float(previous_solution['yaw'])
+            continuation_window = math.radians(float(surface_cfg.get('continuation_window_deg', 20.0)))
+            continuation_step = math.radians(float(surface_cfg.get('continuation_step_deg', 5.0)))
+            local_candidates = self.angle_sweep(
+                previous_yaw - continuation_window,
+                previous_yaw + continuation_window + continuation_step * 0.5,
+                continuation_step,
+                previous_yaw,
+            )
+
+        fallback_candidates = self.angle_sweep(
+            math.radians(float(surface_cfg.get('yaw_min_deg', -180.0))),
+            math.radians(float(surface_cfg.get('yaw_max_deg', 180.0))),
+            math.radians(float(surface_cfg.get('yaw_step_deg', 15.0))),
+            query_yaw,
+            base=query_yaw,
+        )
+        refined_candidates = self.angle_sweep(
+            -math.radians(float(surface_cfg.get('yaw_step_deg', 15.0))),
+            math.radians(float(surface_cfg.get('yaw_step_deg', 15.0))) +
+            math.radians(float(surface_cfg.get('yaw_refinement_deg', 5.0))) * 0.5,
+            math.radians(float(surface_cfg.get('yaw_refinement_deg', 5.0))),
+            query_yaw,
+            base=query_yaw,
+        )
+        return self.deduplicate_angles(local_candidates + refined_candidates + fallback_candidates)
+
+    def angle_sweep(self, angle_min, angle_max, angle_step, center, base=0.0):
+        if angle_step <= 0.0:
+            return [wrap_to_pi(center)]
+        values = []
+        angle = angle_min
+        while angle < angle_max - 1e-9:
+            values.append(wrap_to_pi(base + angle))
+            angle += angle_step
+        values.sort(key=lambda yaw: (angular_distance(yaw, center), yaw))
+        return self.deduplicate_angles(values)
+
+    def deduplicate_angles(self, angles):
+        unique = []
+        for yaw in angles:
+            wrapped = wrap_to_pi(yaw)
+            if all(angular_distance(wrapped, existing) > 1e-6 for existing in unique):
+                unique.append(wrapped)
+        return unique
 
     def surface_aligned_quaternion(self, surface_cfg, yaw):
         normal_world = self.axis_vector(
@@ -516,6 +638,7 @@ class CoveragePlanner(Node):
             path_length += float(np.linalg.norm(curr - prev))
 
         estimated_time_s = 0.0
+        max_joint_delta = 0.0
         for idx in range(1, len(joint_trajectory)):
             prev = np.array(joint_trajectory[idx - 1]['joint_state'].position, dtype=float)
             curr = np.array(joint_trajectory[idx]['joint_state'].position, dtype=float)
@@ -523,6 +646,15 @@ class CoveragePlanner(Node):
             deltas = np.minimum(deltas, 2.0 * math.pi - deltas)
             max_delta = float(np.max(deltas)) if len(deltas) else 0.0
             estimated_time_s += max_delta / max(self.joint_speed_rad_s, 1e-6)
+            max_joint_delta = max(max_joint_delta, max_delta)
+
+        yaw_changes = []
+        for idx in range(1, len(waypoints)):
+            prev_yaw = float(waypoints[idx - 1].get('yaw', 0.0))
+            curr_yaw = float(waypoints[idx].get('yaw', 0.0))
+            yaw_changes.append(angular_distance(curr_yaw, prev_yaw))
+        avg_yaw_change = float(np.mean(yaw_changes)) if yaw_changes else 0.0
+        max_yaw_jump = float(np.max(yaw_changes)) if yaw_changes else 0.0
 
         return {
             'surface': surface_name,
@@ -531,6 +663,9 @@ class CoveragePlanner(Node):
             'coverage_percent': coverage_percent,
             'path_length_m': path_length,
             'estimated_time_s': estimated_time_s,
+            'avg_yaw_change_deg': math.degrees(avg_yaw_change),
+            'max_yaw_jump_deg': math.degrees(max_yaw_jump),
+            'max_joint_delta_rad': max_joint_delta,
         }
 
     def export_surface_outputs(self, surface_name, timestamp, plan):
@@ -538,19 +673,40 @@ class CoveragePlanner(Node):
         waypoints_csv = os.path.join(self.output_dir, f'coverage_waypoints_{suffix}.csv')
         with open(waypoints_csv, 'w', newline='', encoding='utf-8') as handle:
             writer = csv.writer(handle)
-            writer.writerow(['x', 'y', 'z'])
+            writer.writerow(['x', 'y', 'z', 'yaw', 'qx', 'qy', 'qz', 'qw'])
             for point in plan['waypoints']:
-                writer.writerow([point['x'], point['y'], point['z']])
+                orientation = point.get('orientation', {})
+                writer.writerow([
+                    point['x'],
+                    point['y'],
+                    point['z'],
+                    point.get('yaw', ''),
+                    orientation.get('qx', ''),
+                    orientation.get('qy', ''),
+                    orientation.get('qz', ''),
+                    orientation.get('qw', ''),
+                ])
 
         traj_csv = os.path.join(self.output_dir, f'coverage_joint_trajectory_{suffix}.csv')
         with open(traj_csv, 'w', newline='', encoding='utf-8') as handle:
             writer = csv.writer(handle)
-            writer.writerow(['x', 'y', 'z', 'joint_names', 'joint_positions'])
+            writer.writerow([
+                'x', 'y', 'z', 'yaw', 'qx', 'qy', 'qz', 'qw',
+                'joint_names', 'joint_positions',
+            ])
             for row in plan['joint_trajectory']:
                 js = row['joint_state']
                 point = row['point']
+                orientation = row.get('orientation', point.get('orientation', {}))
                 writer.writerow([
-                    point['x'], point['y'], point['z'],
+                    point['x'],
+                    point['y'],
+                    point['z'],
+                    row.get('yaw', point.get('yaw', '')),
+                    orientation.get('qx', ''),
+                    orientation.get('qy', ''),
+                    orientation.get('qz', ''),
+                    orientation.get('qw', ''),
                     ';'.join(js.name),
                     ';'.join(f'{value:.10f}' for value in js.position),
                 ])

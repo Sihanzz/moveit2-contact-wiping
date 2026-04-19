@@ -6,11 +6,20 @@ surfaces:
     target_force_n: 10.0
     force_tolerance_n: 2.0
     target_speed_m_s: 0.20
-    switch_force_n: 2.0
+    contact_force_threshold_n: 2.0
     backoff_force_n: 15.0
-    approach_force_rate_n_s: 30.0
-    force_response_gain: 4.0
-    backoff_force_drop_n_s: 70.0
+    approach_speed_m_s: 0.012
+    nominal_surface_distance_m: 0.012
+    initial_surface_distance_m: 0.045
+    target_penetration_m: 0.0022
+    max_penetration_m: 0.0045
+    max_normal_offset_m: 0.010
+    surface_stiffness_n_m: 4200.0
+    surface_damping_n_s_m: 55.0
+    tool_impedance_stiffness_n_m: 900.0
+    tool_impedance_damping_n_s_m: 120.0
+    force_to_offset_gain_m_n_s: 0.00028
+    backoff_step_m: 0.0015
     obstacle:
       object_name: faucet
       mode: skip
@@ -21,12 +30,22 @@ surfaces:
     target_force_n: 6.0
     force_tolerance_n: 1.5
     target_speed_m_s: 0.15
-    switch_force_n: 2.0
+    contact_force_threshold_n: 2.0
     backoff_force_n: 15.0
-    approach_force_rate_n_s: 24.0
-    force_response_gain: 4.5
-    backoff_force_drop_n_s: 80.0
+    approach_speed_m_s: 0.010
+    nominal_surface_distance_m: 0.010
+    initial_surface_distance_m: 0.038
+    target_penetration_m: 0.0016
+    max_penetration_m: 0.0035
+    max_normal_offset_m: 0.008
+    surface_stiffness_n_m: 3600.0
+    surface_damping_n_s_m: 48.0
+    tool_impedance_stiffness_n_m: 760.0
+    tool_impedance_damping_n_s_m: 96.0
+    force_to_offset_gain_m_n_s: 0.00032
+    backoff_step_m: 0.0017
     disturbance:
       enabled: true
       waypoint_ratio: 0.35
       overload_force_n: 10.5
+      duration_samples: 8

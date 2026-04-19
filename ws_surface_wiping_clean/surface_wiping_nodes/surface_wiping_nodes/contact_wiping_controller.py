@@ -15,7 +15,7 @@ from rclpy.node import Node
 
 
 class ContactWipingController(Node):
-    """Simulation-grade contact-aware wiping controller for Section 3."""
+    """Simulation-grade impedance-like wiping controller for Section 3."""
 
     def __init__(self):
         super().__init__('contact_wiping_controller')
@@ -102,55 +102,90 @@ class ContactWipingController(Node):
         logs = []
 
         time_s = 0.0
-        measured_force = 0.0
-        contact_mode = 'position'
+        state = {
+            'surface_distance_m': float(surface_cfg['initial_surface_distance_m']),
+            'normal_velocity_m_s': 0.0,
+            'commanded_normal_offset_m': 0.0,
+        }
+        contact_mode = 'approach'
         backoff_events = 0
 
         disturbance_cfg = surface_cfg.get('disturbance', {})
         disturbance_enabled = bool(disturbance_cfg.get('enabled', False))
         disturbance_index = -1
+        disturbance_remaining = 0
+        disturbance_consumed = False
+        disturbance_force = 0.0
         if disturbance_enabled and active_waypoints:
             disturbance_index = min(
                 len(active_waypoints) - 1,
                 max(0, int(float(disturbance_cfg.get('waypoint_ratio', 0.5)) * len(active_waypoints)))
             )
-        disturbance_force = float(disturbance_cfg.get('overload_force_n', 0.0))
+            disturbance_force = float(disturbance_cfg.get('overload_force_n', 0.0))
 
         target_force = float(surface_cfg['target_force_n'])
-        force_tolerance = float(surface_cfg['force_tolerance_n'])
-        switch_force = float(surface_cfg['switch_force_n'])
-        backoff_force = float(surface_cfg['backoff_force_n'])
         target_speed = float(surface_cfg['target_speed_m_s'])
-        approach_rate = float(surface_cfg['approach_force_rate_n_s'])
-        response_gain = float(surface_cfg['force_response_gain'])
-        backoff_drop = float(surface_cfg['backoff_force_drop_n_s'])
+        contact_force_threshold = float(surface_cfg['contact_force_threshold_n'])
+        backoff_force = float(surface_cfg['backoff_force_n'])
+        approach_speed = float(surface_cfg['approach_speed_m_s'])
+        nominal_surface_distance = float(surface_cfg['nominal_surface_distance_m'])
+        target_penetration = float(surface_cfg['target_penetration_m'])
+        max_penetration = float(surface_cfg['max_penetration_m'])
+        max_normal_offset = float(surface_cfg['max_normal_offset_m'])
+        surface_stiffness = float(surface_cfg['surface_stiffness_n_m'])
+        surface_damping = float(surface_cfg['surface_damping_n_s_m'])
+        tool_impedance_stiffness = float(surface_cfg['tool_impedance_stiffness_n_m'])
+        tool_impedance_damping = float(surface_cfg['tool_impedance_damping_n_s_m'])
+        force_to_offset_gain = float(surface_cfg['force_to_offset_gain_m_n_s'])
+        backoff_step = float(surface_cfg['backoff_step_m'])
 
         if active_waypoints:
-            while abs(measured_force) <= switch_force:
-                measured_force += approach_rate * self.sample_period_s
+            while True:
+                measurement = self.compute_contact_measurement(
+                    state,
+                    nominal_surface_distance,
+                    surface_stiffness,
+                    surface_damping,
+                    0.0,
+                )
+                if measurement['force_n'] >= contact_force_threshold:
+                    contact_mode = 'contact_track'
+                    logs.append(self.make_log_row(
+                        surface_name,
+                        time_s,
+                        0,
+                        active_waypoints[0],
+                        measurement,
+                        0.0,
+                        contact_mode,
+                        'contact_detected',
+                    ))
+                    time_s += self.sample_period_s
+                    break
+
+                state['surface_distance_m'] = max(
+                    0.0,
+                    state['surface_distance_m'] - approach_speed * self.sample_period_s,
+                )
+                state['normal_velocity_m_s'] = -approach_speed
+                measurement = self.compute_contact_measurement(
+                    state,
+                    nominal_surface_distance,
+                    surface_stiffness,
+                    surface_damping,
+                    0.0,
+                )
                 logs.append(self.make_log_row(
                     surface_name,
                     time_s,
                     0,
                     active_waypoints[0],
-                    measured_force,
+                    measurement,
                     0.0,
                     contact_mode,
                     'approach',
                 ))
                 time_s += self.sample_period_s
-            contact_mode = 'force'
-            logs.append(self.make_log_row(
-                surface_name,
-                time_s,
-                0,
-                active_waypoints[0],
-                measured_force,
-                0.0,
-                contact_mode,
-                'switch_to_force_control',
-            ))
-            time_s += self.sample_period_s
 
         for index, waypoint in enumerate(active_waypoints):
             previous = active_waypoints[index - 1] if index > 0 else waypoint
@@ -158,57 +193,108 @@ class ContactWipingController(Node):
             base_duration = max(self.sample_period_s, segment_length / max(target_speed, 1e-6))
             steps = max(1, int(math.ceil(base_duration / self.sample_period_s)))
 
-            overload_injected = False
             for step in range(steps):
                 speed_scale = 0.96 + 0.04 * math.sin(0.35 * (index + step))
                 tangential_speed = target_speed * speed_scale
-                event = ''
+                event = 'track'
 
-                measured_force += (target_force - measured_force) * response_gain * self.sample_period_s
+                if (
+                    disturbance_enabled and
+                    index == disturbance_index and
+                    disturbance_remaining == 0 and
+                    not disturbance_consumed
+                ):
+                    disturbance_remaining = int(disturbance_cfg.get('duration_samples', 6))
+                    disturbance_consumed = True
 
-                if disturbance_enabled and index == disturbance_index and step == steps // 2 and not overload_injected:
-                    measured_force += disturbance_force
-                    overload_injected = True
+                disturbance_term = disturbance_force if disturbance_remaining > 0 else 0.0
+                if disturbance_remaining > 0:
+                    disturbance_remaining -= 1
                     event = 'disturbance_injected'
 
-                if abs(measured_force) > backoff_force:
+                measurement = self.compute_contact_measurement(
+                    state,
+                    nominal_surface_distance,
+                    surface_stiffness,
+                    surface_damping,
+                    disturbance_term,
+                )
+
+                force_error = target_force - measurement['force_n']
+                desired_penetration = np.clip(
+                    target_penetration + force_error / max(tool_impedance_stiffness, 1e-6),
+                    0.0,
+                    max_penetration,
+                )
+                desired_distance = max(0.0, nominal_surface_distance - desired_penetration)
+                desired_distance -= force_error * force_to_offset_gain * self.sample_period_s
+                desired_distance = np.clip(
+                    desired_distance,
+                    max(0.0, nominal_surface_distance - max_penetration),
+                    nominal_surface_distance + max_normal_offset,
+                )
+                state['commanded_normal_offset_m'] = nominal_surface_distance - desired_distance
+
+                accel = (
+                    tool_impedance_stiffness * (desired_distance - state['surface_distance_m']) -
+                    tool_impedance_damping * state['normal_velocity_m_s']
+                )
+                state['normal_velocity_m_s'] += accel * self.sample_period_s
+                state['surface_distance_m'] += state['normal_velocity_m_s'] * self.sample_period_s
+                state['surface_distance_m'] = np.clip(
+                    state['surface_distance_m'],
+                    0.0,
+                    nominal_surface_distance + max_normal_offset,
+                )
+
+                measurement = self.compute_contact_measurement(
+                    state,
+                    nominal_surface_distance,
+                    surface_stiffness,
+                    surface_damping,
+                    disturbance_term,
+                )
+
+                if measurement['force_n'] > backoff_force:
                     backoff_events += 1
+                    contact_mode = 'backoff'
+                    state['surface_distance_m'] = min(
+                        nominal_surface_distance + max_normal_offset,
+                        state['surface_distance_m'] + backoff_step,
+                    )
+                    state['normal_velocity_m_s'] = 0.0
+                    state['commanded_normal_offset_m'] = nominal_surface_distance - state['surface_distance_m']
+                    measurement = self.compute_contact_measurement(
+                        state,
+                        nominal_surface_distance,
+                        surface_stiffness,
+                        surface_damping,
+                        0.0,
+                    )
                     logs.append(self.make_log_row(
                         surface_name,
                         time_s,
                         index,
                         waypoint,
-                        measured_force,
+                        measurement,
                         0.0,
-                        'backoff',
+                        contact_mode,
                         'overforce_backoff_start',
                     ))
                     time_s += self.sample_period_s
-                    while measured_force > target_force:
-                        measured_force = max(target_force * 0.8, measured_force - backoff_drop * self.sample_period_s)
-                        logs.append(self.make_log_row(
-                            surface_name,
-                            time_s,
-                            index,
-                            waypoint,
-                            measured_force,
-                            0.0,
-                            'backoff',
-                            'backoff',
-                        ))
-                        time_s += self.sample_period_s
-                    contact_mode = 'force'
-                    break
+                    contact_mode = 'contact_track'
+                    continue
 
+                contact_mode = 'contact_track'
                 logs.append(self.make_log_row(
                     surface_name,
                     time_s,
                     index,
                     waypoint,
-                    measured_force,
+                    measurement,
                     tangential_speed,
                     contact_mode,
-                    event or 'track',
+                    event,
                 ))
                 time_s += self.sample_period_s
 
@@ -224,6 +310,26 @@ class ContactWipingController(Node):
             'surface': surface_name,
             'logs': logs,
             'metrics': metrics,
+        }
+
+    def compute_contact_measurement(
+        self,
+        state,
+        nominal_surface_distance,
+        surface_stiffness,
+        surface_damping,
+        disturbance_force,
+    ):
+        penetration = max(0.0, nominal_surface_distance - state['surface_distance_m'])
+        penetration_rate = max(0.0, -state['normal_velocity_m_s']) if penetration > 0.0 else 0.0
+        force_n = penetration * surface_stiffness + penetration_rate * surface_damping + disturbance_force
+        force_n = max(0.0, force_n)
+        return {
+            'surface_distance_m': state['surface_distance_m'],
+            'normal_velocity_m_s': state['normal_velocity_m_s'],
+            'penetration_m': penetration,
+            'commanded_normal_offset_m': state['commanded_normal_offset_m'],
+            'force_n': force_n,
         }
 
     def apply_obstacle_policy(self, surface_name, surface_cfg, waypoints):
@@ -251,7 +357,7 @@ class ContactWipingController(Node):
             active.append(waypoint)
         return active, skipped
 
-    def make_log_row(self, surface_name, time_s, waypoint_index, waypoint, force_n, speed_m_s, mode, event):
+    def make_log_row(self, surface_name, time_s, waypoint_index, waypoint, measurement, speed_m_s, mode, event):
         return {
             'surface': surface_name,
             'time_s': time_s,
@@ -259,10 +365,14 @@ class ContactWipingController(Node):
             'x': waypoint['x'],
             'y': waypoint['y'],
             'z': waypoint['z'],
-            'force_n': force_n,
+            'force_n': measurement['force_n'],
             'speed_m_s': speed_m_s,
             'mode': mode,
             'event': event,
+            'surface_distance_m': measurement['surface_distance_m'],
+            'penetration_m': measurement['penetration_m'],
+            'normal_velocity_m_s': measurement['normal_velocity_m_s'],
+            'commanded_normal_offset_m': measurement['commanded_normal_offset_m'],
         }
 
     def compute_metrics(self, surface_name, surface_cfg, logs, skipped_waypoints, backoff_events):
@@ -270,22 +380,30 @@ class ContactWipingController(Node):
         force_tolerance = float(surface_cfg['force_tolerance_n'])
         target_speed = float(surface_cfg['target_speed_m_s'])
 
-        force_track_logs = [row for row in logs if row['mode'] == 'force']
+        force_track_logs = [row for row in logs if row['mode'] == 'contact_track']
         if force_track_logs:
             forces = np.array([row['force_n'] for row in force_track_logs], dtype=float)
             speeds = np.array([row['speed_m_s'] for row in force_track_logs], dtype=float)
+            penetrations = np.array([row['penetration_m'] for row in force_track_logs], dtype=float)
+            distances = np.array([row['surface_distance_m'] for row in force_track_logs], dtype=float)
             within_tol = np.abs(forces - target_force) <= force_tolerance
             force_within_tolerance_percent = 100.0 * float(np.mean(within_tol))
             avg_force = float(np.mean(forces))
             peak_force = float(np.max(forces))
             avg_speed = float(np.mean(speeds))
             peak_speed = float(np.max(speeds))
+            avg_penetration = float(np.mean(penetrations))
+            max_penetration = float(np.max(penetrations))
+            avg_surface_distance = float(np.mean(distances))
         else:
             force_within_tolerance_percent = 0.0
             avg_force = 0.0
             peak_force = 0.0
             avg_speed = 0.0
             peak_speed = 0.0
+            avg_penetration = 0.0
+            max_penetration = 0.0
+            avg_surface_distance = 0.0
 
         return {
             'surface': surface_name,
@@ -298,6 +416,9 @@ class ContactWipingController(Node):
             'peak_force_n': peak_force,
             'avg_speed_m_s': avg_speed,
             'peak_speed_m_s': peak_speed,
+            'avg_penetration_m': avg_penetration,
+            'max_penetration_m': max_penetration,
+            'avg_surface_distance_m': avg_surface_distance,
             'skipped_waypoints': skipped_waypoints,
             'backoff_events': backoff_events,
         }
@@ -312,6 +433,8 @@ class ContactWipingController(Node):
                 fieldnames=[
                     'surface', 'time_s', 'waypoint_index', 'x', 'y', 'z',
                     'force_n', 'speed_m_s', 'mode', 'event',
+                    'surface_distance_m', 'penetration_m',
+                    'normal_velocity_m_s', 'commanded_normal_offset_m',
                 ],
             )
             writer.writeheader()
@@ -342,6 +465,9 @@ class ContactWipingController(Node):
                 'peak_force_n',
                 'avg_speed_m_s',
                 'peak_speed_m_s',
+                'avg_penetration_m',
+                'max_penetration_m',
+                'avg_surface_distance_m',
                 'skipped_waypoints',
                 'backoff_events',
             ])
@@ -357,6 +483,9 @@ class ContactWipingController(Node):
                     row['peak_force_n'],
                     row['avg_speed_m_s'],
                     row['peak_speed_m_s'],
+                    row['avg_penetration_m'],
+                    row['max_penetration_m'],
+                    row['avg_surface_distance_m'],
                     row['skipped_waypoints'],
                     row['backoff_events'],
                 ])
@@ -370,12 +499,15 @@ class ContactWipingController(Node):
         times = [row['time_s'] for row in logs]
         forces = [row['force_n'] for row in logs]
         speeds = [row['speed_m_s'] for row in logs]
+        penetrations = [row['penetration_m'] for row in logs]
+        commanded_offsets = [row['commanded_normal_offset_m'] for row in logs]
 
         target_force = metrics['target_force_n']
         force_tol = metrics['force_tolerance_n']
         target_speed = metrics['target_speed_m_s']
 
-        fig, (ax_force, ax_speed) = plt.subplots(2, 1, figsize=(10, 7), sharex=True)
+        fig, axes = plt.subplots(3, 1, figsize=(10, 9), sharex=True)
+        ax_force, ax_penetration, ax_speed = axes
 
         ax_force.plot(times, forces, color='tab:red', linewidth=1.5, label='measured force')
         ax_force.axhline(target_force, color='black', linestyle='--', linewidth=1.0, label='target force')
@@ -386,10 +518,15 @@ class ContactWipingController(Node):
             alpha=0.18,
             label='force tolerance band',
         )
-        ax_force.axhline(15.0, color='tab:orange', linestyle=':', linewidth=1.0, label='backoff threshold')
         ax_force.set_ylabel('Force (N)')
-        ax_force.set_title(f'{surface_name.capitalize()} Force Tracking')
+        ax_force.set_title(f'{surface_name.capitalize()} Contact Force')
         ax_force.legend(loc='upper right')
+
+        ax_penetration.plot(times, penetrations, color='tab:purple', linewidth=1.5, label='penetration')
+        ax_penetration.plot(times, commanded_offsets, color='tab:orange', linewidth=1.2, label='commanded offset')
+        ax_penetration.set_ylabel('Normal (m)')
+        ax_penetration.set_title(f'{surface_name.capitalize()} Normal Interaction')
+        ax_penetration.legend(loc='upper right')
 
         ax_speed.plot(times, speeds, color='tab:blue', linewidth=1.5, label='tangential speed')
         ax_speed.axhline(target_speed, color='black', linestyle='--', linewidth=1.0, label='target speed')
@@ -402,10 +539,10 @@ class ContactWipingController(Node):
         )
         ax_speed.set_ylabel('Speed (m/s)')
         ax_speed.set_xlabel('Time (s)')
-        ax_speed.set_title(f'{surface_name.capitalize()} Velocity Tracking')
+        ax_speed.set_title(f'{surface_name.capitalize()} Tangential Velocity')
         ax_speed.legend(loc='upper right')
 
-        for axis in (ax_force, ax_speed):
+        for axis in axes:
             axis.grid(True, linestyle=':', linewidth=0.5, alpha=0.6)
 
         fig.tight_layout()

@@ -4,6 +4,13 @@ keepout_margin: 0.015
 overlap: 0.15
 waypoint_step: 0.02
 joint_speed_rad_s: 0.50
+cartesian_max_step: 0.01
+cartesian_jump_threshold: 0.0
+cartesian_prismatic_jump_threshold: 0.0
+cartesian_revolute_jump_threshold: 0.0
+cartesian_max_velocity_scaling_factor: 0.2
+cartesian_max_acceleration_scaling_factor: 0.2
+cartesian_max_speed_m_s: 0.0
 
 surfaces:
   countertop:

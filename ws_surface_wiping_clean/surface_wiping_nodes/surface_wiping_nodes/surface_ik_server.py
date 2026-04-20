@@ -72,11 +72,6 @@ class SurfaceIkServer(Node):
             response.message = 'ik_service_unavailable'
             return response
 
-        if not self.joint_state_helper.has_joint_state():
-            response.success = False
-            response.message = 'joint_state_unavailable'
-            return response
-
         target_pose = request.target_pose
         frame_id = target_pose.header.frame_id or self.base_frame
         if frame_id != self.base_frame:
@@ -117,6 +112,10 @@ class SurfaceIkServer(Node):
         request.ik_request.timeout.sec = int(self.ik_timeout_sec)
         request.ik_request.timeout.nanosec = int((self.ik_timeout_sec % 1.0) * 1e9)
         request.ik_request.robot_state = self.joint_state_helper.get_robot_state()
+        if not self.joint_state_helper.has_joint_state():
+            self.get_logger().warn(
+                'No /joint_states received yet, calling MoveIt IK with default robot_state seed'
+            )
 
         future = self.ik_client.call_async(request)
         done_event = threading.Event()

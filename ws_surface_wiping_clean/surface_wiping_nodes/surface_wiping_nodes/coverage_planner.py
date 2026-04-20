@@ -14,12 +14,15 @@ import rclpy
 import yaml
 from ament_index_python.packages import get_package_share_directory
 from geometry_msgs.msg import PoseStamped
+from moveit_msgs.msg import Constraints, MoveItErrorCodes
+from moveit_msgs.srv import GetCartesianPath
 from rclpy.callback_groups import ReentrantCallbackGroup
 from rclpy.executors import MultiThreadedExecutor
 from rclpy.node import Node
 from sensor_msgs.msg import JointState
 
 from surface_wiping_interfaces.srv import SolveSurfaceIK
+from .joint_state_helper import JointStateHelper
 
 
 AXIS_INDEX = {'x': 0, 'y': 1, 'z': 2}
@@ -100,11 +103,17 @@ class CoveragePlanner(Node):
         self.declare_parameter('output_dir', '/home/sihan/ws_surface_wiping_clean/outputs')
         self.declare_parameter('reachability_csv', '')
         self.declare_parameter('service_name', 'solve_surface_ik')
+        self.declare_parameter('cartesian_service_name', '/compute_cartesian_path')
+        self.declare_parameter('planning_group', 'ur_manipulator')
+        self.declare_parameter('end_effector_link', 'tool0')
         self.declare_parameter('service_timeout_sec', 5.0)
 
         self.output_dir = self.get_parameter('output_dir').value
         self.reachability_csv = self.get_parameter('reachability_csv').value
         self.service_name = self.get_parameter('service_name').value
+        self.cartesian_service_name = self.get_parameter('cartesian_service_name').value
+        self.planning_group = self.get_parameter('planning_group').value
+        self.end_effector_link = self.get_parameter('end_effector_link').value
         self.service_timeout_sec = float(self.get_parameter('service_timeout_sec').value)
 
         self.pad_length = float(self.coverage_config['pad_length'])
@@ -113,15 +122,40 @@ class CoveragePlanner(Node):
         self.overlap = float(self.coverage_config['overlap'])
         self.waypoint_step = float(self.coverage_config['waypoint_step'])
         self.joint_speed_rad_s = float(self.coverage_config['joint_speed_rad_s'])
+        self.cartesian_max_step = float(self.coverage_config.get('cartesian_max_step', 0.01))
+        self.cartesian_jump_threshold = float(
+            self.coverage_config.get('cartesian_jump_threshold', 0.0)
+        )
+        self.cartesian_prismatic_jump_threshold = float(
+            self.coverage_config.get('cartesian_prismatic_jump_threshold', 0.0)
+        )
+        self.cartesian_revolute_jump_threshold = float(
+            self.coverage_config.get('cartesian_revolute_jump_threshold', 0.0)
+        )
+        self.cartesian_max_velocity_scaling_factor = float(
+            self.coverage_config.get('cartesian_max_velocity_scaling_factor', 0.2)
+        )
+        self.cartesian_max_acceleration_scaling_factor = float(
+            self.coverage_config.get('cartesian_max_acceleration_scaling_factor', 0.2)
+        )
+        self.cartesian_max_speed_m_s = float(
+            self.coverage_config.get('cartesian_max_speed_m_s', 0.0)
+        )
 
         os.makedirs(self.output_dir, exist_ok=True)
 
         self.client_group = ReentrantCallbackGroup()
         self.timer_group = ReentrantCallbackGroup()
+        self.joint_state_helper = JointStateHelper(self)
 
         self.ik_client = self.create_client(
             SolveSurfaceIK,
             self.service_name,
+            callback_group=self.client_group,
+        )
+        self.cartesian_client = self.create_client(
+            GetCartesianPath,
+            self.cartesian_service_name,
             callback_group=self.client_group,
         )
         self.completed = False
@@ -237,6 +271,14 @@ class CoveragePlanner(Node):
         waypoints, joint_trajectory = self.generate_raster_waypoints(
             xs, ys, grid, solution_lookup, surface_name, surface_cfg
         )
+        cartesian_waypoints, cartesian_trajectory = self.build_cartesian_plan(
+            surface_name,
+            waypoints,
+            joint_trajectory,
+        )
+        if cartesian_trajectory:
+            waypoints = cartesian_waypoints
+            joint_trajectory = cartesian_trajectory
 
         metrics = self.compute_metrics(
             surface_name, surface_cfg['strategy'], patch_size, xs, ys, grid, waypoints, joint_trajectory
@@ -309,6 +351,24 @@ class CoveragePlanner(Node):
             feasible_waypoints,
             joint_trajectory,
         )
+        cartesian_waypoints, cartesian_trajectory = self.build_cartesian_plan(
+            surface_name,
+            feasible_waypoints,
+            joint_trajectory,
+        )
+        if cartesian_trajectory:
+            feasible_waypoints = cartesian_waypoints
+            joint_trajectory = cartesian_trajectory
+            metrics = self.compute_metrics(
+                surface_name,
+                strategy,
+                patch_size,
+                np.array([]),
+                np.array([]),
+                np.array([]),
+                feasible_waypoints,
+                joint_trajectory,
+            )
 
         return {
             'surface': surface_name,
@@ -613,6 +673,123 @@ class CoveragePlanner(Node):
         vector = np.zeros(3, dtype=float)
         vector[AXIS_INDEX[axis_name]] = float(sign)
         return vector
+
+    def build_cartesian_plan(self, surface_name, waypoints, fallback_trajectory):
+        if len(waypoints) < 2:
+            return waypoints, fallback_trajectory
+        response = self.call_cartesian_path(waypoints, fallback_trajectory)
+        if response is None:
+            self.get_logger().warn(
+                f'Cartesian path service unavailable for {surface_name}, using discrete IK trajectory'
+            )
+            return waypoints, fallback_trajectory
+        if response.error_code.val != MoveItErrorCodes.SUCCESS or response.fraction <= 0.0:
+            self.get_logger().warn(
+                f'Cartesian path failed for {surface_name}: '
+                f'code={response.error_code.val} fraction={response.fraction:.3f}. '
+                f'Using discrete IK trajectory'
+            )
+            return waypoints, fallback_trajectory
+
+        accepted_count = len(waypoints)
+        if response.fraction < 0.999:
+            accepted_count = max(1, int(math.floor(response.fraction * len(waypoints))))
+            self.get_logger().warn(
+                f'Cartesian path for {surface_name} is partial: '
+                f'fraction={response.fraction:.3f} accepted_waypoints={accepted_count}/{len(waypoints)}'
+            )
+        accepted_waypoints = waypoints[:accepted_count]
+        cartesian_rows = self.robot_trajectory_to_rows(
+            response.solution.joint_trajectory.joint_names,
+            response.solution.joint_trajectory.points,
+            accepted_waypoints,
+        )
+        if not cartesian_rows:
+            self.get_logger().warn(
+                f'Cartesian path returned no trajectory points for {surface_name}, using discrete IK trajectory'
+            )
+            return waypoints, fallback_trajectory
+        return accepted_waypoints, cartesian_rows
+
+    def call_cartesian_path(self, waypoints, fallback_trajectory):
+        if not fallback_trajectory:
+            return None
+        if not self.cartesian_client.wait_for_service(timeout_sec=5.0):
+            return None
+
+        request = GetCartesianPath.Request()
+        request.header.frame_id = self.scene_config['world_frame']
+        request.header.stamp = self.get_clock().now().to_msg()
+        request.start_state = self.make_robot_state_from_joint_state(
+            fallback_trajectory[0]['joint_state']
+        )
+        request.group_name = self.planning_group
+        request.link_name = self.end_effector_link
+        request.waypoints = [self.pose_from_waypoint(waypoint) for waypoint in waypoints]
+        request.max_step = self.cartesian_max_step
+        request.jump_threshold = self.cartesian_jump_threshold
+        request.prismatic_jump_threshold = self.cartesian_prismatic_jump_threshold
+        request.revolute_jump_threshold = self.cartesian_revolute_jump_threshold
+        request.avoid_collisions = True
+        request.path_constraints = Constraints()
+        request.max_velocity_scaling_factor = self.cartesian_max_velocity_scaling_factor
+        request.max_acceleration_scaling_factor = self.cartesian_max_acceleration_scaling_factor
+        request.cartesian_speed_limited_link = self.end_effector_link if self.cartesian_max_speed_m_s > 0.0 else ''
+        request.max_cartesian_speed = self.cartesian_max_speed_m_s
+
+        future = self.cartesian_client.call_async(request)
+        done_event = threading.Event()
+        future.add_done_callback(lambda _: done_event.set())
+        if not done_event.wait(timeout=self.service_timeout_sec):
+            return None
+        return future.result()
+
+    def make_robot_state_from_joint_state(self, joint_state):
+        robot_state = self.joint_state_helper.get_robot_state()
+        robot_state.joint_state = joint_state
+        robot_state.is_diff = False
+        return robot_state
+
+    def pose_from_waypoint(self, waypoint):
+        pose = PoseStamped()
+        pose.header.frame_id = self.scene_config['world_frame']
+        pose.pose.position.x = float(waypoint['x'])
+        pose.pose.position.y = float(waypoint['y'])
+        pose.pose.position.z = float(waypoint['z'])
+        orientation = waypoint.get('orientation', {})
+        pose.pose.orientation.x = float(orientation.get('qx', 0.0))
+        pose.pose.orientation.y = float(orientation.get('qy', 0.0))
+        pose.pose.orientation.z = float(orientation.get('qz', 0.0))
+        pose.pose.orientation.w = float(orientation.get('qw', 1.0))
+        return pose.pose
+
+    def robot_trajectory_to_rows(self, joint_names, trajectory_points, waypoints):
+        rows = []
+        if not trajectory_points:
+            return rows
+        total_points = len(trajectory_points)
+        total_waypoints = len(waypoints)
+        for index, point in enumerate(trajectory_points):
+            if total_waypoints == 0:
+                waypoint = None
+            elif total_points == 1:
+                waypoint = waypoints[0]
+            else:
+                waypoint_index = min(
+                    total_waypoints - 1,
+                    int(round(index * (total_waypoints - 1) / max(total_points - 1, 1))),
+                )
+                waypoint = waypoints[waypoint_index]
+            joint_state = JointState()
+            joint_state.name = list(joint_names)
+            joint_state.position = list(point.positions)
+            rows.append({
+                'point': waypoint,
+                'joint_state': joint_state,
+                'yaw': waypoint.get('yaw', '') if waypoint else '',
+                'orientation': waypoint.get('orientation', {}) if waypoint else {},
+            })
+        return rows
 
     def call_ik(self, pose):
         if not self.ik_client.wait_for_service(timeout_sec=5.0):

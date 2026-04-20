@@ -27,7 +27,7 @@ def generate_launch_description():
     )
     launch_driver_arg = DeclareLaunchArgument(
         'launch_driver',
-        default_value='true',
+        default_value='false',
         description='Include ur_robot_driver',
     )
     launch_moveit_arg = DeclareLaunchArgument(
@@ -132,6 +132,8 @@ def generate_launch_description():
                 parameters=[
                     {'output_dir': output_dir},
                     {'reachability_csv': reachability_csv},
+                    {'planning_group': planning_group},
+                    {'end_effector_link': end_effector_link},
                     {'service_timeout_sec': 3.0},
                 ],
             )

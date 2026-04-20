@@ -221,8 +221,11 @@ class ContactWipingController(Node):
                 )
 
                 force_error = target_force - measurement['force_n']
+                nominal_target_penetration = target_force / max(surface_stiffness, 1e-6)
                 desired_penetration = np.clip(
-                    target_penetration + force_error / max(tool_impedance_stiffness, 1e-6),
+                    0.5 * target_penetration +
+                    0.5 * nominal_target_penetration +
+                    force_error / max(surface_stiffness + tool_impedance_stiffness, 1e-6),
                     0.0,
                     max_penetration,
                 )
@@ -235,17 +238,24 @@ class ContactWipingController(Node):
                 )
                 state['commanded_normal_offset_m'] = nominal_surface_distance - desired_distance
 
-                accel = (
-                    tool_impedance_stiffness * (desired_distance - state['surface_distance_m']) -
-                    tool_impedance_damping * state['normal_velocity_m_s']
+                previous_distance = state['surface_distance_m']
+                response_alpha = np.clip(
+                    self.sample_period_s *
+                    tool_impedance_stiffness / max(tool_impedance_damping, 1e-6),
+                    0.02,
+                    0.35,
                 )
-                state['normal_velocity_m_s'] += accel * self.sample_period_s
-                state['surface_distance_m'] += state['normal_velocity_m_s'] * self.sample_period_s
+                state['surface_distance_m'] += response_alpha * (
+                    desired_distance - state['surface_distance_m']
+                )
                 state['surface_distance_m'] = np.clip(
                     state['surface_distance_m'],
                     0.0,
                     nominal_surface_distance + max_normal_offset,
                 )
+                state['normal_velocity_m_s'] = (
+                    state['surface_distance_m'] - previous_distance
+                ) / max(self.sample_period_s, 1e-6)
 
                 measurement = self.compute_contact_measurement(
                     state,
